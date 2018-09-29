@@ -16,9 +16,9 @@ func newIterTokenizer() *iterTokenizer {
 	return new(iterTokenizer)
 }
 
-func addToken(s string, toks []*Token) []*Token {
+func addToken(s string, index int, toks []*Token) []*Token {
 	if strings.TrimSpace(s) != "" {
-		toks = append(toks, &Token{Text: s})
+		toks = append(toks, &Token{Text: s, Index: index})
 	}
 	return toks
 }
@@ -28,7 +28,7 @@ func isSpecial(token string) bool {
 	return found || internalRE.MatchString(token)
 }
 
-func doSplit(token string) []*Token {
+func doSplit(token string, index int) []*Token {
 	tokens := []*Token{}
 	suffs := []*Token{}
 
@@ -37,35 +37,41 @@ func doSplit(token string) []*Token {
 		if isSpecial(token) {
 			// We've found a special case (e.g., an emoticon) -- so, we add it as a token without
 			// any further processing.
-			tokens = addToken(token, tokens)
+			tokens = addToken(token, index, tokens)
 			break
 		}
 		last = utf8.RuneCountInString(token)
 		lower := strings.ToLower(token)
 		if hasAnyPrefix(token, prefixes) {
 			// Remove prefixes -- e.g., $100 -> [$, 100].
-			tokens = addToken(string(token[0]), tokens)
+			tokens = addToken(string(token[0]), index, tokens)
+			index++
 			token = token[1:]
 		} else if idx := hasAnyIndex(lower, []string{"'ll", "'s", "'re", "'m"}); idx > -1 {
 			// Handle "they'll", "I'll", etc.
 			//
 			// they'll -> [they, 'll].
-			tokens = addToken(token[:idx], tokens)
+			tokens = addToken(token[:idx], index, tokens)
+			index += idx
 			token = token[idx:]
 		} else if idx := hasAnyIndex(lower, []string{"n't"}); idx > -1 {
 			// Handle "Don't", "won't", etc.
 			//
 			// don't -> [do, n't].
-			tokens = addToken(token[:idx], tokens)
+			tokens = addToken(token[:idx], index, tokens)
+			index += idx
 			token = token[idx:]
 		} else if hasAnySuffix(token, suffixes) {
 			// Remove suffixes -- e.g., Well) -> [Well, )].
 			suffs = append([]*Token{
-				{Text: string(token[len(token)-1])}},
+				{Text: string(token[len(token)-1]),
+					Index: index + len(token) - 1,
+				}},
 				suffs...)
 			token = token[:len(token)-1]
 		} else {
-			tokens = addToken(token, tokens)
+			tokens = addToken(token, index, tokens)
+			break
 		}
 	}
 
@@ -80,7 +86,13 @@ func (t *iterTokenizer) tokenize(text string) []*Token {
 	length := utf8.RuneCountInString(clean) + 1
 
 	start, index := 0, 0
-	cache := map[string][]*Token{}
+
+	type cacheToken struct {
+		tokens     []*Token
+		startIndex int
+	}
+
+	cache := map[string]cacheToken{}
 	for index <= length {
 		uc, size := utf8.DecodeRuneInString(clean[index:])
 		if size == 0 {
@@ -92,10 +104,17 @@ func (t *iterTokenizer) tokenize(text string) []*Token {
 			if start < index {
 				span := clean[start:index]
 				if toks, found := cache[span]; found {
-					tokens = append(tokens, toks...)
+					newToks := make([]*Token, len(toks.tokens))
+					offset := index - toks.startIndex
+					for i, t := range toks.tokens {
+						a := &Token{Text: t.Text, Index: t.Index + offset}
+						newToks[i] = a
+					}
+					tokens = append(tokens, newToks...)
+
 				} else {
-					toks := doSplit(span)
-					cache[span] = toks
+					toks := doSplit(span, start)
+					cache[span] = cacheToken{toks, index}
 					tokens = append(tokens, toks...)
 				}
 			}
@@ -110,7 +129,7 @@ func (t *iterTokenizer) tokenize(text string) []*Token {
 	}
 
 	if start < index {
-		tokens = append(tokens, doSplit(clean[start:index])...)
+		tokens = append(tokens, doSplit(clean[start:index], start)...)
 	}
 
 	return tokens

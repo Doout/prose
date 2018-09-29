@@ -6,6 +6,7 @@ type Token struct {
 	Tag   string // The token's part-of-speech tag.
 	Text  string // The token's actual content.
 	Label string // The token's IOB label.
+	Index int    // The token's index in the text
 }
 
 // An Entity represents an individual named-entity.
